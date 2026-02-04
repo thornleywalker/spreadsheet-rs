@@ -8,8 +8,10 @@ use crate::{
     sheet::{SheetIdx, ValueResult},
 };
 
+/// AST expression
 #[derive(Debug, Clone)]
 pub(super) enum Expr {
+    // maybe change these explicit ones out for just a Value?
     Number(f64),
     String(String),
     Bool(bool),

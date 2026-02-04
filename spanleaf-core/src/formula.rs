@@ -12,14 +12,18 @@ pub enum FormulaError {
     InvalidFormula,
 }
 
+/// A parsed formula AST
 #[derive(Debug, Clone)]
 pub struct Formula {
+    /// The raw script of the formula
+    // alternatively, we could maybe regenerate the script from the expression, with consistent formatting
     pub script: String,
     expr: Expr,
 }
 impl Formula {
     /// Parses the script, returning an error if the script is invalid
     pub fn parse(script: &str) -> Result<Self, FormulaError> {
+        // According to chumsky docs, this should be sufficiently quick to generate to not need to cache it
         let expr = language::parser().parse(script).unwrap();
         Ok(Formula {
             script: script.to_string(),
@@ -32,7 +36,6 @@ impl Formula {
         sl: &mut Spanleaf,
         curr_sheet: SheetIdx,
         dependencies: &mut Vec<(SheetIdx, CellIdx)>,
-        rec_lvl: usize,
     ) -> Result<Value, Error> {
         language::eval(
             &self.expr,

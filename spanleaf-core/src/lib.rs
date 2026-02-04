@@ -10,10 +10,9 @@ pub mod formula;
 mod language;
 pub mod sheet;
 
+// Potential configuration, used it for a bit, but nothing currently, but might still later
 #[derive(Debug)]
-struct Config {
-    max_recursion: usize,
-}
+struct Config {}
 
 #[derive(Debug)]
 pub enum Error {
@@ -46,18 +45,16 @@ pub struct Spanleaf {
     /// Chain of dependencies, where the key is the dependee, and the value is a set of dependents
     dependencies: BTreeMap<(SheetIdx, CellIdx), BTreeSet<(SheetIdx, CellIdx)>>,
 
-    // parser: Box<dyn Parser<'src, &'src str, Expr>>,
     config: Config,
 }
 impl Spanleaf {
     pub fn new() -> Self {
         Self {
-            config: Config { max_recursion: 32 },
+            config: Config {},
 
             sheets: Default::default(),
             cache: Default::default(),
             dependencies: Default::default(),
-            // parser: Box::new(parser),
         }
     }
 
@@ -122,21 +119,8 @@ impl Spanleaf {
             .unwrap_or_default())
     }
 
-    pub fn get(&mut self, sref: SheetIdx, cref: CellIdx) -> Result<ValueResult, Error> {
-        self.get_rec(sref, cref, 0)
-    }
-
     /// Gets and caches the calculated value for the given cell
-    pub(crate) fn get_rec(
-        &mut self,
-        sref: SheetIdx,
-        cref: CellIdx,
-        rec_lvl: usize,
-    ) -> Result<ValueResult, Error> {
-        if rec_lvl >= self.config.max_recursion {
-            return Err(Error::MaxRecursionReached);
-        }
-
+    pub(crate) fn get(&mut self, sref: SheetIdx, cref: CellIdx) -> Result<ValueResult, Error> {
         let mut val_res = self.get_raw_value(sref, cref);
 
         // if it's a formula, resolve it recursively to a value
@@ -153,7 +137,7 @@ impl Spanleaf {
 
                 let mut deps = vec![];
                 // calculate and cache
-                let res = f.eval(self, sref, &mut deps, rec_lvl)?;
+                let res = f.eval(self, sref, &mut deps)?;
                 // establish the dependency
                 for dep in deps {
                     self.dependencies
