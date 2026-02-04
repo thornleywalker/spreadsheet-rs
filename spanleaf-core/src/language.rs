@@ -1,4 +1,4 @@
-use std::{num::ParseFloatError, ops};
+use std::ops;
 
 use chumsky::{number, prelude::*};
 
@@ -224,7 +224,25 @@ pub fn eval(expr: &Expr, ctx: &mut EvalCtx<'_>) -> Result<Value, Error> {
     }
 }
 
+/// Functions that can be called within a formula
 mod functions {
+
+    /// Helper macro to generate argument count validation for any number of argument counts
+    // we don't even have to be explicit, we can just do macro-fu to get the number of args. Yeah bay-beeeee
+    macro_rules! function {
+        ($name:ident($ctx:ident $(, $arg:ident)*) $body:expr) => {
+            pub fn $name($ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
+                #[allow(unreachable_patterns)] // if it's a no-arg fn, there's duplication
+                match args {
+                    [$($arg),*] => $body,
+                    [] => Err(Error::InsufficientArgs),
+                    [..] => Err(Error::TooManyArgs),
+                }
+            }
+        };
+    }
+
+    // These are the sub-groups that Sheets identifies
     pub use info::*;
     pub use logical::*;
     pub use math::*;
@@ -237,21 +255,17 @@ mod functions {
             language::{EvalCtx, Expr, eval},
         };
 
-        pub fn is_blank(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
-            match args {
-                [] => Err(Error::InsufficientArgs),
-                [arg] => Ok(matches!(eval(arg, ctx)?, Value::Bool(_)).into()),
-                [_, ..] => Err(Error::TooManyArgs),
+        function!(
+            is_blank(ctx, arg) {
+                Ok(matches!(eval(arg, ctx)?, Value::Bool(_)).into())
             }
-        }
+        );
 
-        pub fn is_formula(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
-            match args {
-                [] => Err(Error::InsufficientArgs),
-                [arg] => Ok(matches!(eval(arg, ctx)?, Value::Formula(_)).into()),
-                [_, ..] => Err(Error::TooManyArgs),
+        function!(
+            is_formula(ctx, arg) {
+                Ok(matches!(eval(arg, ctx)?, Value::Formula(_)).into())
             }
-        }
+        );
     }
 
     mod logical {
@@ -261,13 +275,9 @@ mod functions {
             language::{EvalCtx, Expr},
         };
 
-        pub fn r#false(ctx: &mut EvalCtx, _: &[Expr]) -> Result<Value, Error> {
-            Ok(false.into())
-        }
+        function!(r#false(ctx) {Ok(false.into())});
 
-        pub fn r#true(ctx: &mut EvalCtx, _: &[Expr]) -> Result<Value, Error> {
-            Ok(true.into())
-        }
+        function!(r#true(ctx) {Ok(true.into())});
     }
 
     mod math {
@@ -279,36 +289,25 @@ mod functions {
             language::{EvalCtx, Expr, eval},
         };
 
-        pub fn abs(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
-            match args {
-                [] => Err(Error::InsufficientArgs),
-                [arg] => {
-                    let val = eval(arg, ctx)?;
+        function!(abs(ctx, arg) {
+            let val = eval(arg, ctx)?;
 
-                    todo!()
+            todo!()
+        });
+
+        function!(power(ctx, base, exponent) {
+            let base = eval(base, ctx)?;
+            let exponent = eval(exponent, ctx)?;
+
+            match (base, exponent) {
+                (Value::Number(base), Value::Number(exponent)) => {
+                    Ok(base.powf(exponent).into())
                 }
-                [_, ..] => Err(Error::TooManyArgs),
+                _ => Err(Error::RefMustBeNumber),
             }
-        }
+        });
 
-        pub fn power(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
-            match args {
-                [base, exponent] => {
-                    let base = eval(base, ctx)?;
-                    let exponent = eval(exponent, ctx)?;
-
-                    match (base, exponent) {
-                        (Value::Number(base), Value::Number(exponent)) => {
-                            Ok(base.powf(exponent).into())
-                        }
-                        _ => Err(Error::RefMustBeNumber),
-                    }
-                }
-                [_base, _exponent, ..] => Err(Error::TooManyArgs),
-                _ => Err(Error::InsufficientArgs),
-            }
-        }
-
+        // since it takes any number of args, we don't need the macro
         pub fn sum(ctx: &mut EvalCtx, args: &[Expr]) -> Result<Value, Error> {
             let mut arg_vals = vec![];
             for arg in args {
@@ -319,7 +318,6 @@ mod functions {
     }
 
     mod statistical {
-
         use crate::{
             Error,
             cell::Value,
@@ -337,15 +335,6 @@ mod functions {
             sum / Value::Number(len as f64)
         }
     }
-}
-
-#[derive(Debug, Default, Clone, thiserror::Error, PartialEq)]
-enum ParseError {
-    #[error("Could not parse float")]
-    FloatParse(#[from] ParseFloatError),
-    #[default]
-    #[error("Unexpected error")]
-    Other,
 }
 
 #[cfg(test)]

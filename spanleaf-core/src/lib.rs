@@ -58,12 +58,16 @@ impl Spanleaf {
         }
     }
 
+    /// Inserts a new sheet to the Spanleaf
+    ///
+    /// Because this is the only way to get a sheet index, we can know that it'll be present
     pub fn insert_sheet(&mut self, name: impl ToString) -> SheetIdx {
         let sref = SheetIdx::next();
         self.sheets.insert(sref, Sheet::new(name));
         sref
     }
 
+    /// Inserts a row default to the specified sheet
     pub fn insert_row_default<T: TryInto<Value>>(
         &mut self,
         sheet: SheetIdx,
@@ -81,6 +85,7 @@ impl Spanleaf {
             .unwrap_or_default())
     }
 
+    /// Inserts a col default to the specified sheet
     pub fn insert_col_default<T: TryInto<Value>>(
         &mut self,
         sheet: SheetIdx,
@@ -98,6 +103,7 @@ impl Spanleaf {
             .unwrap_or_default())
     }
 
+    /// Insert a value to the specified sheet
     pub fn insert<T: TryInto<Value>>(
         &mut self,
         sheet: SheetIdx,
@@ -163,6 +169,8 @@ impl Spanleaf {
     }
 
     /// Gets the uncalculated value for the given cell
+    ///
+    /// Useful for formula bar displaying
     pub fn get_raw_value(&self, sref: SheetIdx, cref: CellIdx) -> ValueResult {
         self.sheets
             .get(&sref)
