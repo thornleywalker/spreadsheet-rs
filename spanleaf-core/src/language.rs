@@ -11,22 +11,33 @@ use crate::{
 /// AST expression
 #[derive(Debug, Clone)]
 pub(super) enum Expr {
-    // maybe change these explicit ones out for just a Value?
-    Number(f64),
-    String(String),
-    Bool(bool),
+    /// A literal value
+    // Needed to avoid recursion, cuz a value can be a formula. But I don't know if I like that...
+    Value(Box<Value>),
+    /// The name of a sheet
     Sheet(String),
+    /// The reference to a cell
     CellRef(Option<Box<Expr>>, Box<Expr>, Box<Expr>),
+    /// Dereferencing of a cell reference, accessing the pointed to value
     CellDeref(Box<Expr>),
+    /// Negation
     Neg(Box<Expr>),
+    /// Addition
     Add(Box<Expr>, Box<Expr>),
+    /// Subtraction
     Sub(Box<Expr>, Box<Expr>),
+    /// Multiplication
     Mul(Box<Expr>, Box<Expr>),
+    /// Division
     Div(Box<Expr>, Box<Expr>),
+    /// Function call
     /// Fn name, then arguments list
     Call(String, Vec<Expr>),
 }
 impl Expr {
+    pub fn value(val: Value) -> Self {
+        Self::Value(Box::new(val))
+    }
     pub fn cell_ref(sref: Option<Expr>, row: Expr, col: Expr) -> Self {
         Self::CellRef(sref.map(Box::new), Box::new(row), Box::new(col))
     }
@@ -55,18 +66,21 @@ pub(crate) fn parser<'src>() -> impl Parser<'src, &'src str, Expr> {
     let expr = recursive({
         |expr| {
             let num = number::number::<{ number::format::STANDARD }, &str, f64, extra::Default>()
-                .map(Expr::Number)
+                .map(Value::Number)
+                .map(Expr::value)
                 .padded();
 
             let string = any()
                 .filter(|c| c != &'\'')
                 .repeated()
                 .collect::<String>()
-                .map(Expr::String);
+                .map(Value::String)
+                .map(Expr::value);
 
             let boolean = just("true")
                 .or(just("false"))
-                .map(|s| Expr::Bool(s.parse().unwrap()));
+                .map(|s| Value::Bool(s.parse().unwrap()))
+                .map(Expr::value);
 
             let ident = text::ascii::ident().padded();
 
@@ -140,17 +154,21 @@ pub(crate) fn parser<'src>() -> impl Parser<'src, &'src str, Expr> {
     expr
 }
 
+/// Necessary context for the evaluation of an expression
 pub struct EvalCtx<'a> {
+    /// The top level Spanleaf instance
     pub sl: &'a mut Spanleaf,
+    /// The sheet of the current formula.
+    ///
+    /// Used for implicit cell referencing, i.e. [2, 4] refers to row 2, col 4 of the same sheet
     pub curr_sheet: SheetIdx,
+    /// The dependency chain for cache invalidation
     pub dependencies: &'a mut Vec<(SheetIdx, CellIdx)>,
 }
 
 pub fn eval(expr: &Expr, ctx: &mut EvalCtx<'_>) -> Result<Value, Error> {
     match expr {
-        Expr::Number(f) => Ok(Value::Number(*f)),
-        Expr::String(s) => Ok(Value::String(s.clone())),
-        Expr::Bool(b) => Ok(Value::Bool(*b)),
+        Expr::Value(val) => Ok((**val).clone()),
         Expr::Sheet(name) => Ok(Value::String(name.clone())),
         Expr::CellRef(sheet_ref, row, col) => {
             let Value::Number(row) = eval(row, ctx)? else {
@@ -197,6 +215,7 @@ pub fn eval(expr: &Expr, ctx: &mut EvalCtx<'_>) -> Result<Value, Error> {
             // I don't want to create exprs for every action, that sounds like a nightmare. So I think just an enum and associated functions? Maybe not even an enum?
             // Can also create a HashMap<String, fn(&Expr) -> Result<Value, Error>> to make it more dynamic friendly, populate it on startup or use statics?
             match fn_name.as_str() {
+                // This could probably be macro-tized, or trait-ified or smth. But it works, so
                 "sum" => functions::sum(ctx, args),
                 "average" => functions::average(ctx, args),
                 _ => Err(Error::FunctionNotAvailable),
@@ -387,8 +406,8 @@ mod tests {
 
     #[test]
     fn evaluation() {
-        let seven = Expr::Number(7.0);
-        let five = Expr::Number(5.0);
+        let seven = Expr::value(Value::Number(7.0));
+        let five = Expr::value(Value::Number(5.0));
 
         let sum = dbg!(Expr::Add(Box::new(seven.clone()), Box::new(five.clone())));
 
@@ -402,7 +421,7 @@ mod tests {
 
     #[test]
     fn function() {
-        let sev = Expr::Number(7.0);
+        let sev = Expr::value(Value::Number(7.0));
 
         let sum = Expr::Call("average".to_string(), vec![sev.clone(); 1000000]);
 
