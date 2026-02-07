@@ -1,4 +1,4 @@
-use std::ops;
+use std::{fmt::Display, ops};
 
 use crate::{
     Error,
@@ -36,6 +36,19 @@ pub enum Value {
 impl Value {
     pub fn new(val: impl Into<Value>) -> Self {
         val.into()
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::None => writeln!(f),
+            Value::Bool(b) => writeln!(f, "{b}"),
+            Value::Number(n) => writeln!(f, "{n}"),
+            Value::String(s) => writeln!(f, "{s}"),
+            Value::Ref { sref, cref } => writeln!(f, "{sref:?}[{}, {}]", cref.row, cref.col),
+            Value::Formula(formula) => writeln!(f, "{}", formula.script),
+        }
     }
 }
 
@@ -77,8 +90,12 @@ impl TryFrom<&str> for Value {
     type Error = FormulaError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if let Some('=') = value.chars().next() {
-            Ok(Self::Formula(Formula::parse(&value[1..])?))
+        if value.is_empty() {
+            Ok(Self::None)
+        } else if let Some('=') = value.chars().next() {
+            Ok(Self::Formula(Formula::parse(value)?))
+        } else if let Ok(num) = value.parse() {
+            Ok(Self::Number(num))
         } else {
             Ok(Self::String(value.to_string()))
         }

@@ -1,0 +1,79 @@
+/* App-wide styling */
+
+:root {
+    --formula-bar-h: 40px;
+    --footer-bar-h: 40px;
+}
+
+body {
+    background-color: #98b398;
+    color: #000000;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0px;
+    padding: 0px;
+}
+
+.formula-bar {
+    height: var(--formula-bar-h);
+    border: #000000;
+    border-width: 1px;
+    border-style: solid;
+    align-items: center;
+    display: flex;
+    flex-direction: row;
+}
+
+.current-cell-display {
+    width: 60px;
+}
+
+.cells-container {
+    border: 1px #000000;
+    border-style: solid;
+    height: calc(100vh - (var(--formula-bar-h) + var(--footer-bar-h) + 6px));
+    margin: 0px;
+    padding: 0px;
+    overflow: scroll;
+}
+
+table, td, th {
+    border-collapse: collapse;
+    border: black;
+    border-width: 1px;
+    border-style: solid;
+}
+
+.cells {
+    margin: 0px;
+    padding: 0px;
+}
+
+.cell {
+    min-width: 80px;
+    height: 24px;
+    padding-left: 3px;
+    padding-right: 3px;
+}
+
+.error-cell {
+    background: linear-gradient(-135deg, #ff0000 5px, #00000000 0)
+}
+
+.row-default {
+    border-bottom: 1px double red;
+}
+
+.col-default {
+    border-left: 1px double blue;
+}
+
+.active-elem {
+    border: 1px double green;
+}
+
+.sheet-footer {
+    height: var(--footer-bar-h);
+    border: #000000;
+    border-width: 1px;
+    border-style: solid;
+}

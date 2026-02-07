@@ -173,6 +173,14 @@ impl Sheet {
             })
             .unwrap_or_default()
     }
+
+    pub fn get_row_default(&self, row: u64) -> Value {
+        self.row_defaults.get(&row).cloned().unwrap_or_default()
+    }
+
+    pub fn get_col_default(&self, col: u64) -> Value {
+        self.col_defaults.get(&col).cloned().unwrap_or_default()
+    }
 }
 
 /// Converts the row and column to a shell offset

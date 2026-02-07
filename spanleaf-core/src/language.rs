@@ -11,6 +11,10 @@ use crate::{
 /// AST expression
 #[derive(Debug, Clone)]
 pub(super) enum Expr {
+    /// The current row
+    CurrRow,
+    /// The current column
+    CurrCol,
     /// A literal value
     // Needed to avoid recursion, cuz a value can be a formula. But I don't know if I like that...
     Value(Box<Value>),
@@ -112,6 +116,9 @@ pub(crate) fn parser<'src>() -> impl Parser<'src, &'src str, Expr> {
                 .then(raw_ref)
                 .map(|(_, (sheet, ((row, _), col)))| Expr::cell_ref(sheet, row, col));
 
+            let r = just('r').map(|_| Expr::CurrRow);
+            let c = just('c').map(|_| Expr::CurrCol);
+
             let atom = choice((
                 num,
                 boolean,
@@ -120,19 +127,25 @@ pub(crate) fn parser<'src>() -> impl Parser<'src, &'src str, Expr> {
                 call,
                 cref,
                 deref,
+                r,
+                c,
             ))
             .padded();
 
             let op = |c| just(c).padded();
 
-            let unary = op('-').repeated().foldr(atom, |_op, rhs| Expr::neg(rhs));
+            let deref = op('*')
+                .repeated()
+                .foldr(atom, |_op, rhs| Expr::cell_deref(rhs));
 
-            let product = unary.clone().foldl(
+            let neg = op('-').repeated().foldr(deref, |_op, rhs| Expr::neg(rhs));
+
+            let product = neg.clone().foldl(
                 choice((
                     op('*').to(Expr::mul as fn(_, _) -> _),
                     op('/').to(Expr::div as fn(_, _) -> _),
                 ))
-                .then(unary)
+                .then(neg)
                 .repeated(),
                 |lhs, (op, rhs)| op(lhs, rhs),
             );
@@ -157,17 +170,20 @@ pub(crate) fn parser<'src>() -> impl Parser<'src, &'src str, Expr> {
 /// Necessary context for the evaluation of an expression
 pub struct EvalCtx<'a> {
     /// The top level Spanleaf instance
-    pub sl: &'a mut Spanleaf,
+    pub sl: &'a Spanleaf,
     /// The sheet of the current formula.
     ///
     /// Used for implicit cell referencing, i.e. [2, 4] refers to row 2, col 4 of the same sheet
     pub curr_sheet: SheetIdx,
+    pub curr_cell: CellIdx,
     /// The dependency chain for cache invalidation
     pub dependencies: &'a mut Vec<(SheetIdx, CellIdx)>,
 }
 
 pub fn eval(expr: &Expr, ctx: &mut EvalCtx<'_>) -> Result<Value, Error> {
     match expr {
+        Expr::CurrRow => Ok(Value::Number(ctx.curr_cell.row as f64)),
+        Expr::CurrCol => Ok(Value::Number(ctx.curr_cell.col as f64)),
         Expr::Value(val) => Ok((**val).clone()),
         Expr::Sheet(name) => Ok(Value::String(name.clone())),
         Expr::CellRef(sheet_ref, row, col) => {
@@ -389,6 +405,7 @@ mod tests {
                 sl: &mut Spanleaf::new(),
                 curr_sheet: SheetIdx::next(),
                 dependencies: &mut vec![],
+                curr_cell: CellIdx { row: 0, col: 0 },
             },
         )
     }

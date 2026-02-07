@@ -1,8 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use crate::{
     cell::{CellIdx, Value},
-    sheet::{Sheet, SheetIdx, ValueResult},
+    sheet::{Sheet, SheetIdx, ValueResult, ValueSource},
 };
 
 pub mod cell;
@@ -41,16 +44,18 @@ enum CacheEntry {
 pub struct Spanleaf {
     sheets: BTreeMap<SheetIdx, Sheet>,
 
-    cache: BTreeMap<(SheetIdx, CellIdx), CacheEntry>,
+    // could probably refactor into a Cache type for convenience
+    /// Cache of values to reduce duplicate calculation and detect cyclic dependencies
+    cache: RefCell<BTreeMap<(SheetIdx, CellIdx), CacheEntry>>,
     /// Chain of dependencies, where the key is the dependee, and the value is a set of dependents
-    dependencies: BTreeMap<(SheetIdx, CellIdx), BTreeSet<(SheetIdx, CellIdx)>>,
+    dependencies: RefCell<BTreeMap<(SheetIdx, CellIdx), BTreeSet<(SheetIdx, CellIdx)>>>,
 
-    config: Config,
+    _config: Config,
 }
 impl Spanleaf {
     pub fn new() -> Self {
         Self {
-            config: Config {},
+            _config: Config {},
 
             sheets: Default::default(),
             cache: Default::default(),
@@ -75,7 +80,17 @@ impl Spanleaf {
         val: T,
     ) -> Result<Value, T::Error> {
         // clear cache for dependents
-        todo!();
+        let to_clear = {
+            let deps = self.dependencies.borrow();
+            deps.iter()
+                .filter_map(|((sref, cref), v)| (sref == &sheet && cref.row == row).then_some(v))
+                .flat_map(|dependants| dependants.iter().cloned())
+                .collect::<Vec<_>>()
+        };
+
+        for dep in to_clear {
+            self.clear_from_cache(dep.0, dep.1);
+        }
 
         Ok(self
             .sheets
@@ -93,7 +108,17 @@ impl Spanleaf {
         val: T,
     ) -> Result<Value, T::Error> {
         // clear cache for dependents
-        todo!();
+        let to_clear = {
+            let deps = self.dependencies.borrow();
+            deps.iter()
+                .filter_map(|((sref, cref), v)| (sref == &sheet && cref.col == col).then_some(v))
+                .flat_map(|dependants| dependants.iter().cloned())
+                .collect::<Vec<_>>()
+        };
+
+        for dep in to_clear {
+            self.clear_from_cache(dep.0, dep.1);
+        }
 
         Ok(self
             .sheets
@@ -111,11 +136,7 @@ impl Spanleaf {
         val: T,
     ) -> Result<Value, T::Error> {
         // clear the cache for dependents
-        if let Some(deps) = self.dependencies.get(&(sheet, cref)) {
-            for dependent in deps {
-                self.cache.remove(dependent);
-            }
-        }
+        self.clear_from_cache(sheet, cref);
 
         Ok(self
             .sheets
@@ -125,13 +146,27 @@ impl Spanleaf {
             .unwrap_or_default())
     }
 
+    pub fn clear_from_cache(&self, sref: SheetIdx, cref: CellIdx) {
+        // scope to drop the borrow
+        let _maybe_e = { self.cache.borrow_mut().remove(&(sref, cref)) };
+
+        // scope to drop the borrow
+        let maybe_deps = { self.dependencies.borrow_mut().remove(&(sref, cref)) };
+
+        if let Some(deps) = maybe_deps {
+            for dep in deps {
+                self.clear_from_cache(dep.0, dep.1);
+            }
+        }
+    }
+
     /// Gets and caches the calculated value for the given cell
-    pub(crate) fn get(&mut self, sref: SheetIdx, cref: CellIdx) -> Result<ValueResult, Error> {
+    pub fn get(&self, sref: SheetIdx, cref: CellIdx) -> Result<ValueResult, Error> {
         let mut val_res = self.get_raw_value(sref, cref);
 
         // if it's a formula, resolve it recursively to a value
         if let Value::Formula(f) = val_res.as_ref() {
-            *val_res = if let Some(cached) = self.cache.get(&(sref, cref)) {
+            *val_res = if let Some(cached) = self.cache.borrow().get(&(sref, cref)) {
                 // check the cache
                 match cached {
                     CacheEntry::Calculating => return Err(Error::CyclicDependencyDetected),
@@ -139,14 +174,17 @@ impl Spanleaf {
                 }
             } else {
                 // set cycle trap
-                self.cache.insert((sref, cref), CacheEntry::Calculating);
+                self.cache
+                    .borrow_mut()
+                    .insert((sref, cref), CacheEntry::Calculating);
 
                 let mut deps = vec![];
                 // calculate and cache
-                let res = f.eval(self, sref, &mut deps)?;
+                let res = f.eval(self, sref, cref, &mut deps)?;
                 // establish the dependency
                 for dep in deps {
                     self.dependencies
+                        .borrow_mut()
                         .entry(dep)
                         .or_default()
                         .insert((sref, cref));
@@ -155,6 +193,7 @@ impl Spanleaf {
                 // clear cycle trap
                 let Some(CacheEntry::Calculating) = self
                     .cache
+                    .borrow_mut()
                     .insert((sref, cref), CacheEntry::Calculated(res.clone()))
                 else {
                     // the trap /should/ be a Some(Calculating), is it possible for this to not be true?
@@ -176,6 +215,28 @@ impl Spanleaf {
             .get(&sref)
             .map(|s| s.get_formula(cref))
             .unwrap_or_default()
+    }
+
+    pub fn get_row_default(&self, sref: SheetIdx, row: u64) -> ValueResult {
+        ValueResult {
+            value: self
+                .sheets
+                .get(&sref)
+                .map(|s| s.get_row_default(row))
+                .unwrap_or_default(),
+            source: ValueSource::RowDefault,
+        }
+    }
+
+    pub fn get_col_default(&self, sref: SheetIdx, col: u64) -> ValueResult {
+        ValueResult {
+            value: self
+                .sheets
+                .get(&sref)
+                .map(|s| s.get_col_default(col))
+                .unwrap_or_default(),
+            source: ValueSource::ColDefault,
+        }
     }
 }
 

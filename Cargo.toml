@@ -1,3 +1,6 @@
 [workspace]
-members = ["spanleaf", "spanleaf-core"]
+members = [
+    "spanleaf",
+    "spanleaf-core", "spanleaf",
+]
 resolver = "3"

@@ -24,7 +24,7 @@ impl Formula {
     /// Parses the script, returning an error if the script is invalid
     pub fn parse(script: &str) -> Result<Self, FormulaError> {
         // According to chumsky docs, this should be sufficiently quick to generate to not need to cache it
-        let expr = language::parser().parse(script).unwrap();
+        let expr = language::parser().parse(&script[1..]).unwrap();
         Ok(Formula {
             script: script.to_string(),
             expr,
@@ -33,8 +33,9 @@ impl Formula {
     /// Evaluate the formula
     pub(crate) fn eval(
         &self,
-        sl: &mut Spanleaf,
+        sl: &Spanleaf,
         curr_sheet: SheetIdx,
+        curr_cell: CellIdx,
         dependencies: &mut Vec<(SheetIdx, CellIdx)>,
     ) -> Result<Value, Error> {
         language::eval(
@@ -42,6 +43,7 @@ impl Formula {
             &mut language::EvalCtx {
                 sl,
                 curr_sheet,
+                curr_cell,
                 dependencies,
             },
         )

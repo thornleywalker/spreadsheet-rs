@@ -1,66 +1,319 @@
-// The dioxus prelude contains a ton of common items used in dioxus apps. It's a good idea to import wherever you
-// need dioxus
 use dioxus::prelude::*;
+use spanleaf_core::{
+    cell::{CellIdx, Value},
+    sheet::{SheetIdx, ValueResult, ValueSource},
+    Spanleaf,
+};
 
-use components::Hero;
-use views::{Blog, Home, Navbar};
-
-/// Define a components module that contains all shared components for our app.
-mod components;
-/// Define a views module that contains the UI for all Layouts and Routes for our app.
-mod views;
-
-/// The Route enum is used to define the structure of internal routes in our app. All route enums need to derive
-/// the [`Routable`] trait, which provides the necessary methods for the router to work.
-/// 
-/// Each variant represents a different URL pattern that can be matched by the router. If that pattern is matched,
-/// the components for that route will be rendered.
-#[derive(Debug, Clone, Routable, PartialEq)]
-#[rustfmt::skip]
-enum Route {
-    // The layout attribute defines a wrapper for all routes under the layout. Layouts are great for wrapping
-    // many routes with a common UI like a navbar.
-    #[layout(Navbar)]
-        // The route attribute defines the URL pattern that a specific route matches. If that pattern matches the URL,
-        // the component for that route will be rendered. The component name that is rendered defaults to the variant name.
-        #[route("/")]
-        Home {},
-        // The route attribute can include dynamic parameters that implement [`std::str::FromStr`] and [`std::fmt::Display`] with the `:` syntax.
-        // In this case, id will match any integer like `/blog/123` or `/blog/-456`.
-        #[route("/blog/:id")]
-        // Fields of the route variant will be passed to the component as props. In this case, the blog component must accept
-        // an `id` prop of type `i32`.
-        Blog { id: i32 },
-}
-
-// We can import assets in dioxus with the `asset!` macro. This macro takes a path to an asset relative to the crate root.
-// The macro returns an `Asset` type that will display as the path to the asset in the browser or a local path in desktop bundles.
 const FAVICON: Asset = asset!("/assets/favicon.ico");
-// The asset macro also minifies some assets like CSS and JS to make bundled smaller
-const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
+const MAIN_CSS: Asset = asset!("/assets/main.css");
+// const HEADER_SVG: Asset = asset!("/assets/header.svg");
 
 fn main() {
-    // The `launch` function is the main entry point for a dioxus app. It takes a component and renders it with the platform feature
-    // you have enabled
+    info!("Start");
+
     dioxus::launch(App);
 }
 
-/// App is the main component of our app. Components are the building blocks of dioxus apps. Each component is a function
-/// that takes some props and returns an Element. In this case, App takes no props because it is the root of our app.
-///
-/// Components should be annotated with `#[component]` to support props, better error messages, and autocomplete
 #[component]
 fn App() -> Element {
-    // The `rsx!` macro lets us define HTML inside of rust. It expands to an Element with all of our HTML inside.
+    info!("Starting");
+
+    let mut sl = Spanleaf::new();
+    let sref = sl.insert_sheet("Sheet1");
+
+    {
+        // row and col defaults
+        sl.insert_row_default(sref, 7, 1).unwrap();
+        sl.insert_col_default(sref, 4, "apple").unwrap();
+        // use the current row or column as a value
+        sl.insert_col_default(sref, 0, "=r").unwrap();
+
+        // explicit values overwrite row and col defaults
+        sl.insert(sref, CellIdx::new(0, 0), -3).unwrap();
+
+        // reference other cells
+        sl.insert(sref, CellIdx::new(2, 4), "=[0, 0]").unwrap();
+
+        // fibonacci
+        sl.insert(sref, CellIdx::new(0, 10), 0).unwrap();
+        sl.insert(sref, CellIdx::new(1, 10), 1).unwrap();
+        // functions in formulae
+        sl.insert_col_default(sref, 10, "=sum([r-1, c], [r-2, c])")
+            .unwrap();
+
+        // golden ratio approx
+        sl.insert_col_default(sref, 11, "=[r-1, c-1] / [r, c-1]")
+            .unwrap();
+
+        // setting explicit references
+        for i in 1..10 {
+            sl.insert(sref, CellIdx::new(0, i), format!("=[0, {}] + 1", i - 1))
+                .unwrap();
+            sl.insert(sref, CellIdx::new(i, i), format!("={i} * {i}"))
+                .unwrap();
+        }
+
+        sl.insert(sref, CellIdx::new(11, 2), "Lorem Ipsum").unwrap();
+        // reference indirection
+        sl.insert(sref, CellIdx::new(12, 2), "=&[11, 2]").unwrap();
+        // value is now a reference
+        sl.insert(sref, CellIdx::new(13, 2), "=[12, 2]").unwrap();
+        // dereference the indirect cell reference
+        sl.insert(sref, CellIdx::new(14, 2), "=*[13, 2]").unwrap();
+
+        // cyclic dependency error
+        sl.insert(sref, CellIdx::new(12, 6), "=[12, 7]").unwrap();
+        sl.insert(sref, CellIdx::new(12, 7), "=[12, 6]").unwrap();
+    }
+
+    let sl = use_signal(move || sl);
+    let curr_sheet = use_signal(move || sref);
+    let curr_elem = use_signal(|| ActiveElement::Cell(CellIdx::new(0, 0)));
+
+    info!("Creating sheet");
+
     rsx! {
-        // In addition to element and text (which we will see later), rsx can contain other components. In this case,
-        // we are using the `document::Link` component to add a link to our favicon and main CSS file into the head of our app.
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
+        FormulaBar { sl, curr_sheet, curr_elem }
+        Cells { sl, curr_sheet, curr_elem }
+        Sheets { sl, curr_sheet }
+    }
+}
 
+#[derive(Clone, Copy)]
+pub enum ActiveElement {
+    Row(u64),
+    Col(u64),
+    Cell(CellIdx),
+}
 
-        // The router component renders the route enum we defined above. It will handle synchronization of the URL and render
-        // the layouts and components for the active route.
-        Router::<Route> {}
+#[component]
+pub fn FormulaBar(
+    sl: Signal<Spanleaf>,
+    curr_sheet: Signal<SheetIdx>,
+    curr_elem: Signal<ActiveElement>,
+) -> Element {
+    let sref = curr_sheet();
+    let active_el = curr_elem();
+
+    let (raw_value, curr) = {
+        let sl = sl.read();
+        match active_el {
+            ActiveElement::Row(row) => {
+                (sl.get_row_default(sref, row).value(), format!("Row {row}"))
+            }
+            ActiveElement::Col(col) => {
+                (sl.get_col_default(sref, col).value(), format!("Col {col}"))
+            }
+            ActiveElement::Cell(cref) => {
+                let val = sl.get_raw_value(sref, cref);
+                (
+                    match val.source {
+                        ValueSource::Native => val.value(),
+                        ValueSource::RowDefault | ValueSource::ColDefault => Value::None,
+                    },
+                    format!("[{}, {}]", cref.row, cref.col),
+                )
+            }
+        }
+    };
+
+    rsx! {
+        div { class: "formula-bar",
+            div { class: "current-cell-display", "{curr}" }
+
+            input {
+                id: "formula-entry",
+                onchange: move |evt| {
+                    evt.prevent_default();
+
+                    info!("{evt:?}");
+                    match active_el {
+                        ActiveElement::Row(row) => {
+                            sl.write().insert_row_default(sref, row, evt.value()).unwrap();
+                        }
+                        ActiveElement::Col(col) => {
+                            sl.write().insert_col_default(sref, col, evt.value()).unwrap();
+                        }
+                        ActiveElement::Cell(cref) => {
+                            sl.write().insert(sref, cref, evt.value()).unwrap();
+                        }
+                    };
+                    info!("Updated");
+                },
+                value: "{raw_value}",
+            }
+
+        }
+    }
+}
+
+#[component]
+pub fn Cells(
+    sl: Signal<Spanleaf>,
+    curr_sheet: Signal<SheetIdx>,
+    curr_elem: Signal<ActiveElement>,
+) -> Element {
+    info!("Rendering cells");
+
+    let sref = curr_sheet.read();
+    let display_rows = 30;
+    let display_cols = 30;
+
+    let (row_defaults, col_defaults) = {
+        let sl = sl.read();
+        (
+            (0..display_rows)
+                .map(|row| (row, sl.get_row_default(*sref, row)))
+                // .map(|i| (i, ()))
+                .collect::<Vec<_>>(),
+            (0..display_cols)
+                .map(|col| (col, sl.get_col_default(*sref, col)))
+                // .map(|i| (i, ()))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    info!("finished getting defaults");
+
+    rsx! {
+        div { class: "cells-container",
+            table { class: "cells",
+                tr {
+                    // empty corner
+                    th { "" }
+
+                    // header row
+                    for (col , val) in col_defaults {
+                        HeaderCell { idx: col, val, curr_elem }
+                    }
+                }
+
+                for (row , default_val) in row_defaults {
+                    tr {
+                        // header col
+                        HeaderCell { idx: row, val: default_val, curr_elem }
+
+                        for col in 0..display_cols {
+
+                            Cell {
+                                sl,
+                                sref: *sref,
+                                cref: CellIdx { row, col },
+                                curr_elem,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn HeaderCell(idx: u64, val: ValueResult, curr_elem: Signal<ActiveElement>) -> Element {
+    let mut class = "cell".to_string();
+
+    let s = match val.source {
+        ValueSource::Native => String::new(),
+        ValueSource::RowDefault => {
+            {
+                if let ActiveElement::Row(row) = curr_elem() {
+                    if row == idx {
+                        class.push_str(" active-elem");
+                    }
+                }
+            }
+
+            if let Value::None = val.value {
+                format!("[{idx}]")
+            } else {
+                class.push_str(" row-default");
+                format!("[{idx}] {}", val.value)
+            }
+        }
+        ValueSource::ColDefault => {
+            if let ActiveElement::Col(col) = curr_elem() {
+                if col == idx {
+                    class.push_str(" active-elem");
+                }
+            }
+
+            if let Value::None = val.value {
+                format!("[{idx}]")
+            } else {
+                class.push_str(" col-default");
+                format!("[{idx}] {}", val.value)
+            }
+        }
+    };
+
+    rsx! {
+        th {
+            class,
+            onclick: move |_| {
+                match val.source {
+                    ValueSource::Native => todo!(),
+                    ValueSource::RowDefault => *curr_elem.write() = ActiveElement::Row(idx),
+                    ValueSource::ColDefault => *curr_elem.write() = ActiveElement::Col(idx),
+                }
+            },
+            "{s}"
+        }
+    }
+}
+
+#[component]
+pub fn Cell(
+    sl: Signal<Spanleaf>,
+    sref: SheetIdx,
+    cref: CellIdx,
+    curr_elem: Signal<ActiveElement>,
+) -> Element {
+    let raw = sl.read().get_raw_value(sref, cref).value();
+    let val = sl.read().get(sref, cref);
+    let mut class = "cell".to_string();
+
+    let (s, title) = match val {
+        Ok(val) => {
+            match &val.source {
+                ValueSource::Native => {}
+                ValueSource::RowDefault => class.push_str(" row-default"),
+                ValueSource::ColDefault => class.push_str(" col-default"),
+            };
+            (val.to_string(), raw.to_string())
+        }
+        Err(e) => {
+            class.push_str(" error-cell");
+            ("#ERROR".to_string(), format!("{e:?}"))
+        }
+    };
+
+    {
+        if let ActiveElement::Cell(cell) = curr_elem() {
+            if cell == cref {
+                class.push_str(" active-elem");
+            }
+        }
+    }
+
+    rsx! {
+        td {
+            class,
+            title,
+            onclick: move |_| {
+                *curr_elem.write() = ActiveElement::Cell(cref);
+            },
+            "{s}"
+        }
+    }
+}
+
+#[component]
+pub fn Sheets(sl: Signal<Spanleaf>, curr_sheet: Signal<SheetIdx>) -> Element {
+    rsx! {
+        div { class: "sheet-footer" }
     }
 }
